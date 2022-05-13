@@ -1,0 +1,128 @@
+---
+- name: KylinCloud | Checking core components (1)
+  shell: >
+    {{ bin_dir }}/kubectl get deploy -n kylincloud-system ky-account
+  register: check_account
+  failed_when: "check_account.stderr and 'NotFound' not in check_account.stderr"
+
+- name: KylinCloud | Checking core components (2)
+  shell: >
+    {{ bin_dir }}/kubectl get deploy -n kylincloud-system ky-apigateway
+  register: check_apigateway
+  failed_when: "check_apigateway.stderr and 'NotFound' not in check_apigateway.stderr"
+
+- name: KylinCloud | Checking core components (3)
+  shell: >
+    {{ bin_dir }}/kubectl get deploy -n kylincloud-system ky-account -o jsonpath='{.spec.replicas}'
+  register: check_account_replicas
+  failed_when: "check_account_replicas.stderr and 'NotFound' not in check_account_replicas.stderr"
+  when:
+    - check_account.rc == 0
+
+- name: KylinCloud | Checking core components (4)
+  shell: >
+    {{ bin_dir }}/kubectl get deploy -n kylincloud-system ky-apigateway -o jsonpath='{.spec.replicas}'
+  register: check_apigateway_replicas
+  failed_when: "check_apigateway_replicas.stderr and 'NotFound' not in check_apigateway_replicas.stderr"
+  when:
+    - check_apigateway.rc == 0
+
+- block:
+  - name: KylinCloud | Updating ky-core status
+    shell: >
+      {{ bin_dir }}/kubectl patch cc ky-installer
+      --type merge
+      -p '{"status": {"core": {"migration": true}}}'
+      -n kylincloud-system
+    register: import
+    failed_when: "import.stderr and 'Warning' not in import.stderr"
+    until: import is succeeded
+    retries: 5
+    delay: 3
+  - set_fact:
+      ks_upgrade: True
+  when:
+    - check_account.rc == 0
+    - check_apigateway.rc == 0
+    - check_account_replicas.stdout != "0"
+    - check_apigateway_replicas.stdout != "0"
+    - "'NotFound' not in check_account.stderr"
+    - "'NotFound' not in check_apigateway.stderr"
+    - "'NotFound' not in check_account_replicas.stderr"
+    - "'NotFound' not in check_apigateway_replicas.stderr"
+
+
+- name: KylinCloud | Creating KylinCloud directory
+  file:
+    path: "{{ kylincloud_dir }}"
+    state: directory
+    mode: 0755
+
+
+- name: KylinCloud | Getting installation init files
+  copy:
+    src: "{{ item }}"
+    dest: "{{ kylincloud_dir }}/"
+  loop:
+    - "ky-init"
+
+- import_tasks: ky-init.yaml
+  when: ks_upgrade is not defined or (ks_upgrade != True)
+
+
+- name: KylinCloud | Initing KylinCloud
+  shell: "{{ bin_dir }}/kubectl apply -f {{ kylincloud_dir }}/ky-init/{{ item }}"
+  loop:
+    - "role-templates.yaml"
+    - "webhook-secret.yaml"
+    - "network.kylincloud.io.yaml"
+    - "iam.kylincloud.io.yaml"
+    - "quota.kylincloud.io.yaml"
+  register: import
+  failed_when: "import.stderr and 'AlreadyExists' not in import.stderr and 'Warning' not in import.stderr"
+
+
+- name: KylinCloud | Getting controls-system file
+  template:
+    src: "{{ item.file }}.j2"
+    dest: "{{ kylincloud_dir }}/{{ item.file }}"
+  with_items:
+    - { name: kylincloud-controls-system, file: kylincloud-controls-system.yaml }
+
+
+- name: KylinCloud | Installing controls-system
+  command: "{{ bin_dir }}/kubectl apply -f {{ kylincloud_dir }}/kylincloud-controls-system.yaml  -n kylincloud-controls-system"
+  register: import
+  failed_when: "import.stderr and 'AlreadyExists' not in import.stderr"
+
+
+# - name: KylinCloud | Creating KylinCloud vpa
+#   shell: "{{ bin_dir }}/kubectl apply -f {{ kylincloud_dir }}/ky-init/ky-vpa.yaml"
+#   register: result
+#   until: result is succeeded
+#   retries: 5
+#   delay: 3
+#   when:
+#     - vertical_pod_autoscaler_enable == true
+
+- name: KylinCloud | Generating kubeconfig-admin
+  shell: >
+    /bin/bash {{ kylincloud_dir }}/ky-init/generate-kubeconfig.sh
+  when:
+    - openpitrix.enabled is defined and openpitrix.enabled
+
+# - name: KylinCloud | Checking kylincloud component
+#   shell: >
+#     {{ bin_dir }}/kubectl get deploy -n kylincloud-system
+#   register: kylincloud_component_pod
+
+# - name: KylinCloud | Getting kylincloud component version
+#   shell: >
+#     {{ bin_dir }}/kubectl get deploy -n  kylincloud-system ky-console -o jsonpath='{.metadata.labels.version}'
+#   register: console_version
+#   when:
+#     - kylincloud_component_pod.stdout.find("ky-console") != -1
+
+# - import_tasks: ky-stop.yaml
+#   when:
+#     - console_version.stdout and console_version.stdout != ks_version

@@ -1,0 +1,16 @@
+apiVersion: logging.kylincloud.io/v1alpha2
+kind: Input
+metadata:
+  name: docker
+  namespace: kylincloud-logging-system
+  labels:
+    logging.kylincloud.io/enabled: "true"
+    logging.kylincloud.io/component: logging
+spec:
+  systemd:
+    tag: service.docker
+    path: /var/log/journal
+    db: /fluent-bit/tail/docker.db
+    dbSync: Normal
+    systemdFilter:
+      - _SYSTEMD_UNIT=docker.service

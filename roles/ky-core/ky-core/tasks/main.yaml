@@ -1,0 +1,147 @@
+---
+
+
+- name: KylinCloud | Getting Kubernetes version
+  shell: >
+    {{ bin_dir }}/kubectl version -o json | jq '.serverVersion.gitVersion' | sed s/\"//g
+  register: kubernetes_version
+  failed_when: false
+
+
+- name: KylinCloud | Setting Kubernetes version
+  set_fact:
+    kube_version: "{{ kubernetes_version.stdout }}"
+  failed_when: false
+
+
+- name: KylinCloud | Getting Kubernetes master num
+  shell: >
+    {{ bin_dir }}/kubectl get node | awk '{if(NR>1){print $3}}' | grep master |wc -l
+  register: masters
+  failed_when: false
+
+
+- name: KylinCloud | Setting master num
+  set_fact:
+    master_num: "{{ masters.stdout }}"
+  failed_when: false
+
+- name: KylinCloud | Override master num
+  set_fact:
+    master_num: "3"
+  failed_when: false
+  when:
+    - master_num is defined and (master_num == "1" or master_num == "0")
+    - enableHA is defined and enableHA
+
+- name: ks-console | Checking ks-console svc
+  shell: "{{ bin_dir }}/kubectl get svc -n kylincloud-system"
+  register: result
+
+- name: ks-console | Getting ks-console svc port
+  shell: "{{ bin_dir }}/kubectl get svc ks-console -n kylincloud-system -o=jsonpath='{.spec.ports[0].nodePort}'"
+  register: ks_console_svc_port
+  when: result.stdout.find("ks-console") != -1
+
+
+- name: ks-console | Setting console_port
+  set_fact:
+    console_port: "{{ ks_console_svc_port.stdout }}"
+  when: result.stdout.find("ks-console") != -1
+
+
+- name: KylinCloud | Getting Ingress installation files
+  copy:
+    src: "{{ item }}"
+    dest: "{{ kylincloud_dir }}/"
+  loop:
+    - "ingress"
+    - "ks-apiserver"
+    - "ks-console"
+    - "ks-controller-manager"
+
+
+- name: KylinCloud | Creating manifests
+  template:
+    src: "{{ item.file }}.j2"
+    dest: "{{ kylincloud_dir }}/{{ item.path }}/{{ item.file }}"
+  with_items:
+    - { path: ingress, file: ingress-controller.yaml, type: config }
+    - { path: ks-apiserver, file: ks-apiserver.yml, type: deploy }
+    - { path: ks-controller-manager, file: ks-controller-manager.yaml, type: deploy }
+    - { path: ks-console, file: ks-console-config.yml, type: config }
+    - { path: ks-console, file: ks-console-deployment.yml, type: deploy }
+    - { path: ks-console, file: ks-console-svc.yml, type: svc }
+    - { path: ks-console, file: sample-bookinfo-configmap.yaml, type: config }
+
+
+- name: KylinCloud | Deleting Ingress-controller configmap
+  shell: >
+    {{ bin_dir }}/kubectl delete cm -n kylincloud-system ks-router-config
+  failed_when: false
+
+- name: KylinCloud | Creating Ingress-controller configmap
+  command: >
+    {{ bin_dir }}/kubectl create configmap ks-router-config
+    --from-file=ingress-controller.yaml={{ kylincloud_dir }}/ingress/ingress-controller.yaml
+    --from-file=ingress-controller-svc.yaml={{ kylincloud_dir }}/ingress/ingress-controller-svc.yaml
+    -n kylincloud-system
+  register: cm_state
+  failed_when: "cm_state.stderr and 'AlreadyExists' not in cm_state.stderr"
+
+# - name: KylinCloud | Updating kubectl image
+#   shell: >
+#     for deploy in $(kubectl -n kylincloud-controls-system get deploy  | grep kubectl  | awk '{print $1}');
+#     do kubectl -n kylincloud-controls-system set image deployment/$deploy kubectl={{ ks_kubectl_repo }}:{{ ks_kubectl_tag }};
+#     done
+#   when:
+#     - account_version.stdout and account_version.stdout != 'v2.1.1'
+#   ignore_errors: True
+
+- name: KylinCloud | Creating ky-core
+  command: >
+    {{ bin_dir }}/kubectl apply -f {{ kylincloud_dir }}/{{ item.path }}/{{ item.file }} --force
+  register: source_state
+  failed_when: "source_state.stderr and 'AlreadyExists' not in source_state.stderr"
+  loop:
+    - { path: ks-apiserver, file: ks-apiserver.yml }
+    - { path: ks-controller-manager, file: ks-controller-manager.yaml }
+    - { path: ks-console, file: ks-console-config.yml }
+    - { path: ks-console, file: sample-bookinfo-configmap.yaml }
+    - { path: ks-console, file: ks-console-deployment.yml }
+
+- name: KylinCloud | Checking ks-console svc
+  command: >
+    {{ bin_dir }}/kubectl get svc -n kylincloud-system
+  register: ks_svc
+
+- name: KylinCloud | Creating ks-console svc
+  command: >
+    {{ bin_dir }}/kubectl apply -f {{ kylincloud_dir }}/{{ item.path }}/{{ item.file }} --force
+  register: source_state
+  failed_when: "source_state.stderr and 'AlreadyExists' not in source_state.stderr"
+  loop:
+    - { path: ks-console, file: ks-console-svc.yml }
+  when:
+    - ks_svc.stdout.find("ks-console") == -1
+
+- name: KylinCloud | Patching ks-console svc
+  command: >
+    {{ bin_dir }}/kubectl patch -n kylincloud-system svc ks-console -p
+    '{"metadata": {"labels": {"app": "ks-console", "tier": "frontend", "version": "{{ ks_version }}"}}, "spec": {"selector": {"app": "ks-console", "tier": "frontend", "version": "{{ ks_version }}"}}}'
+  when:
+    - ks_svc.stdout.find("ks-console") != -1
+
+- name: KylinCloud | Importing ky-core status
+  shell: >
+    {{ bin_dir }}/kubectl patch cc ks-installer
+    --type merge
+    -p '{"status": {"core": {"status": "enabled", "enabledTime": "{{ lookup('pipe','date  +%Y-%m-%dT%H:%M:%S%Z') }}"}}}'
+    -n kylincloud-system
+  register: import
+  failed_when: "import.stderr and 'Warning' not in import.stderr"
+  until: import is succeeded
+  retries: 5
+  delay: 3
+
+

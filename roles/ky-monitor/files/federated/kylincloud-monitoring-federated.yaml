@@ -1,0 +1,14 @@
+apiVersion: types.kubefed.io/v1beta1
+kind: FederatedNamespace
+metadata:
+  name: kylincloud-monitoring-federated
+  namespace: kylincloud-monitoring-federated
+spec:
+  placement:
+    clusterSelector: {}
+  template:
+    metadata:
+      labels:
+        kylincloud.io/workspace: system-workspace
+      annotations:
+        kylincloud.io/creator: admin

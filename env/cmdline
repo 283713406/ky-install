@@ -1,0 +1,1 @@
+-e @/kylincloud/config/ks-config.json -e @/kylincloud/config/ks-status.json

@@ -1,0 +1,36 @@
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  labels:
+    app: openpitrix
+    component: openpitrix-upgrade-job
+    version: v3.1.0
+  name: openpitrix-upgrade-job
+  namespace: kylincloud-system
+spec:
+  backoffLimit: 100
+  template:
+    metadata:
+      labels:
+        app: openpitrix
+        component: openpitrix-upgrade-job
+        version: v3.1.0
+    spec:
+      serviceAccountName: kylincloud
+      restartPolicy: OnFailure
+      containers:
+        - name: upgrade
+          command:
+            - sh
+            - -c
+            - upgrade && import-app import
+          image: {{ openpitrix_job_repo }}:{{ openpitrix_job_tag }}
+          imagePullPolicy: IfNotPresent
+          volumeMounts:
+            - mountPath: /etc/kylincloud
+              name: kylincloud-config
+      volumes:
+        - name: kylincloud-config
+          configMap:
+            name: kylincloud-config

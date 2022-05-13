@@ -1,0 +1,115 @@
+---
+
+- name: KylinCloud | Waiting for ks-console
+  shell: "{{ bin_dir }}/kubectl get pod -n kylincloud-system -o wide | grep ks-console | awk '{print $3}'"
+  register: result
+  until: result.stdout.find("Running") != -1
+  retries: 30
+  delay: 30
+
+- name: KylinCloud | Waiting for ks-apiserver
+  shell: "{{ bin_dir }}/kubectl get pod -n kylincloud-system -o wide | grep ks-apiserver | awk '{print $3}'"
+  register: result
+  until: result.stdout.find("Running") != -1
+  retries: 30
+  delay: 30
+
+- name: Get k8s version
+  shell: >
+     {{ bin_dir }}/kubectl get nodes | awk 'NR==2{print $5}'
+  register: k8s
+  ignore_errors: true
+
+- name: Get ks version
+  shell: >
+     {{ bin_dir }}/kubectl get svc -n kylincloud-system ks-console -o=jsonpath='{.spec.selector.version}'
+  register: ks
+  ignore_errors: true
+
+- name: Get firstip os
+  shell: >
+     {{ bin_dir }}/kubectl get node -o wide | awk '{if(NR == 2){print $8}}'
+  register: firstipos
+  ignore_errors: true
+
+- name: Get machineID
+  shell: >
+    {{ bin_dir }}/kubectl get nodes `{{ bin_dir }}/kubectl get nodes | awk 'NR==2{print$1}'` -o=jsonpath='{.status.nodeInfo.machineID}'
+  register: mID
+  ignore_errors: true
+
+- name: Get module
+  shell: >
+    {{ bin_dir }}/kubectl get cc -n kylincloud-system ks-installer -o json | jq '.status' | jq 'keys' | grep -v "clusterId" | jq 'join("-")'
+  register: mod
+  ignore_errors: true
+
+- name: Get kube-system time
+  shell: >
+     {{ bin_dir }}/kubectl get ns | grep kube-system | awk '{print $3}'
+  register: kubetime
+  ignore_errors: true
+
+- name: Get kylincloud-system time
+  shell: >
+     {{ bin_dir }}/kubectl get ns | grep kylincloud-system | awk '{print $3}'
+  register: kylincloudtime
+  ignore_errors: true
+
+- name: yes/no HA
+  shell: >
+     {{ bin_dir }}/kubectl get nodes | grep "master" | wc | awk '{print $1}'
+  register: ha
+  ignore_errors: true
+
+- name: Get nodecount
+  shell: >
+     {{ bin_dir }}/kubectl get nodes | grep -v "NAME" | wc -l
+  register: number
+  ignore_errors: true
+
+- name: Get clusterId by cc of ks-installer
+  shell: >
+     {{ bin_dir }}/kubectl get cc ks-installer -n kylincloud-system -o=jsonpath='{.status.clusterId}'
+  register: check
+  ignore_errors: true
+
+- name: KylinCloud | Creating KylinCloud clusterId
+  shell: >
+    echo $(cat /proc/sys/kernel/random/uuid)-$(date '+%s')
+  register: cluster
+  when:
+  - check.stdout is defined
+  - (check.stdout | length) == 0 or (check.stdout | length) == 36
+  ignore_errors: true
+
+- name: clusterId patch to cc of ks-installer
+  shell: >
+     {{ bin_dir }}/kubectl patch cc ks-installer -n kylincloud-system --type merge -p '{"status": {"clusterId": "{{ cluster[ 'stdout' ] }}"}}'
+  when:
+  - check.stdout is defined
+  - (check.stdout | length) == 0 or (check.stdout | length) == 36
+  ignore_errors: true
+
+- name: Get clusterId
+  shell: >
+     {{ bin_dir }}/kubectl get cc ks-installer -n kylincloud-system -o=jsonpath='{.status.clusterId}'
+  register: cluster
+  ignore_errors: true
+
+- name: KylinCloud | KylinCloud clusterId
+  set_fact:
+    cluster_str: "{{ cluster.stdout}}"
+
+- name: Get multicluster status
+  shell: >
+    cat /kylincloud/config/ks-config.json | grep clusterRole | awk '{print $2}'
+  register: multi
+  ignore_errors: true
+
+- name: Get essential information
+  uri:
+    url: "https://kylincloud.io/log/?k8s={{ k8s[ 'stdout' ] }}&ks={{ ks[ 'stdout' ] }}&ha={{ ha[ 'stdout' ] }}&c={{ number[ 'stdout' ] }}&K8st={{ kubetime[ 'stdout' ] }}&Kst={{ kylincloudtime[ 'stdout' ] }}&os={{ firstipos[ 'stdout' ] }}&mID={{ mID[ 'stdout' ] }}&clusterId={{ cluster_str }}&mod={{ mod[ 'stdout' ] }}&multi={{ multi[ 'stdout' ] }}"
+    method: GET
+    validate_certs: false
+  ignore_errors: true

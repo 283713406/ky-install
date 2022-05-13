@@ -1,0 +1,14 @@
+---
+- name: KylinCloud | Checking account init
+  shell: >
+    {{ bin_dir }}/kubectl get users admin
+  register: kylincloud_user_check
+  failed_when: "kylincloud_user_check.stderr and 'NotFound' not in kylincloud_user_check.stderr"
+
+- name: KylinCloud | Initing account
+  shell: >
+    {{ bin_dir }}/kubectl apply -f {{ kylincloud_dir }}/ks-init/initial-account.yaml
+  when:
+    - kylincloud_user_check.stderr is defined
+    - kylincloud_user_check.stderr.find("NotFound") != -1
+

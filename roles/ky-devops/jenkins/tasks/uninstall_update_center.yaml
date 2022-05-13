@@ -1,0 +1,4 @@
+---
+- name: ky-devops | Uninstall update center
+  shell: >
+    {{ bin_dir }}/helm -n kylincloud-devops-system uninstall uc

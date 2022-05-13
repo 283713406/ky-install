@@ -1,0 +1,14 @@
+apiVersion: logging.kylincloud.io/v1alpha2
+kind: Filter
+metadata:
+  name: filter-events
+  namespace: kylincloud-logging-system
+  labels:
+    logging.kylincloud.io/enabled: "true"
+    logging.kylincloud.io/component: "events"
+spec:
+  match: kube_events
+  filters:
+    - parser:
+        keyName: log
+        parser: json

@@ -1,0 +1,44 @@
+---
+- name: KubeEdge | Getting KubeEdge installation files
+  copy:
+    src: "kubeedge"
+    dest: "{{ kylincloud_dir }}/"
+
+- name: KubeEdge | Getting NodeIp
+  shell: "{{ bin_dir }}/kubectl get node -o wide | awk '{if(NR == 2){print $6}}'"
+  register: ks_kubeedge_nodeIP
+
+- name: KubeEdge | Creating manifests
+  template:
+    src: "{{ item.file }}.j2"
+    dest: "{{ kylincloud_dir }}/{{ item.path }}/{{ item.file }}"
+  with_items:
+    - { path: kubeedge/kubeedge, file: values.yaml }
+    - { path: kubeedge, file: custom-values-kubeedge.yaml }
+
+- name: KubeEdge | Installing KubeEdge
+  shell: >
+    {{ bin_dir }}/helm upgrade --install kubeedge
+    {{ kylincloud_dir }}/kubeedge/kubeedge
+    --namespace kubeedge
+    --create-namespace
+    -f {{ kylincloud_dir }}/kubeedge/custom-values-kubeedge.yaml
+  register: result
+  until: result is succeeded
+  retries: 3
+
+- name: KubeEdge | Labeling kubeedge namespace
+  shell: >
+    {{ bin_dir }}/kubectl label namespace kubeedge kylincloud.io/workspace=system-workspace --overwrite
+
+- name: KubeEdge | Importing kubeEdge status
+  shell: >
+    {{ bin_dir }}/kubectl patch cc ks-installer
+    --type merge
+    -p '{"status": {"kubeedge": {"status": "enabled", "enabledTime": "{{ lookup('pipe','date  +%Y-%m-%dT%H:%M:%S%Z') }}"}}}'
+    -n kylincloud-system
+  register: import
+  failed_when: "import.stderr and 'Warning' not in import.stderr"
+  until: import is succeeded
+  retries: 5
+  delay: 3

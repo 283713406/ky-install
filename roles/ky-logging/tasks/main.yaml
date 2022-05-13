@@ -1,0 +1,43 @@
+---
+- name: ky-logging | Getting logging installation files
+  copy:
+    src: "fluentbit-operator"
+    dest: "{{ kylincloud_dir }}/"
+
+
+- name: ky-logging | Checking fluent-bit migrating
+  shell: >
+    {{ bin_dir }}/kubectl get outputs.logging.kylincloud.io -n kylincloud-logging-system es -o jsonpath='{.metadata.name}'
+  register: migrating_completed
+  failed_when: false
+
+
+- name: ky-logging | Creating manifests
+  template:
+    src: "{{ item.file }}.j2"
+    dest: "{{ kylincloud_dir }}/fluentbit-operator/{{ item.file }}"
+  with_items:
+    - { name: custom-output-elasticsearch-logging, file: custom-output-elasticsearch-logging.yaml }
+  when: migrating_completed.rc != 0 or migrating_completed.stdout.find("es") == -1
+
+
+- name: ky-logging | Apply fluent-bit operator custom resources
+  shell: >
+    {{ bin_dir }}/kubectl apply -f {{ kylincloud_dir }}/fluentbit-operator
+
+
+- import_tasks: logsidecar.yaml
+  when:
+    - logging is defined and logging.logsidecar is defined and logging.logsidecar.enabled is defined and logging.logsidecar.enabled
+
+- name: ky-logging | Importing logging status
+  shell: >
+    {{ bin_dir }}/kubectl patch cc ks-installer
+    --type merge
+    -p '{"status": {"logging": {"status": "enabled", "enabledTime": "{{ lookup('pipe','date  +%Y-%m-%dT%H:%M:%S%Z') }}"}}}'
+    -n kylincloud-system
+  register: import
+  failed_when: "import.stderr and 'Warning' not in import.stderr"
+  until: import is succeeded
+  retries: 5
+  delay: 3

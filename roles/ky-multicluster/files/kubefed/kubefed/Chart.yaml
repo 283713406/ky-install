@@ -1,0 +1,9 @@
+apiVersion: v2
+dependencies:
+- condition: controllermanager.enabled
+  name: controllermanager
+  repository: https://localhost/
+  version: 0.7.0
+description: KubeFed helm chart
+name: kubefed
+version: 0.7.0

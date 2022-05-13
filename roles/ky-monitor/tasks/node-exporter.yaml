@@ -1,0 +1,8 @@
+---
+- name: Monitoring | Installing node-exporter
+  shell: >
+    {{ bin_dir }}/kubectl apply -f {{ kylincloud_dir }}/prometheus/node-exporter --force
+  register: import
+  until: import.rc == 0
+  retries: 30
+  delay: 5

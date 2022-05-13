@@ -1,0 +1,204 @@
+---
+
+- import_tasks: init-namespaces.yaml
+
+
+- name: KylinCloud | Getting Kubernetes master num
+  shell: >
+    {{ bin_dir }}/kubectl get node | awk '{if(NR>1){print $3}}' | grep master | wc -l
+  register: masters
+  failed_when: false
+
+
+- name: KylinCloud | Setting master num
+  set_fact:
+    enableHA: >-
+      {% if masters is defined and masters.stdout is defined and masters.stdout != "0" and masters.stdout != "1" %}true{% else %}false{% endif %}
+  when:
+    - enableHA is not defined
+
+- name: KylinCloud | Getting common component installation files
+  copy:
+    src: "{{ item }}"
+    dest: "{{ kylincloud_dir }}/"
+  loop:
+    - "common"
+    - "ks-crds"
+
+
+- name: KylinCloud | Creating KylinCloud crds
+  shell: "{{ bin_dir }}/kubectl apply -R -f {{ item }}"
+  register: import
+  with_fileglob:
+    - "{{ kylincloud_dir }}/ks-crds/*.yaml"
+  failed_when: "import.stderr and 'Warning: kubectl apply' not in import.stderr"
+
+- name: KylinCloud | Creating Storage ProvisionerCapability
+  shell: "{{ bin_dir }}/kubectl apply -R -f {{ kylincloud_dir }}/ks-crds/provisonercapability"
+  register: import
+  until: import.rc == 0
+  retries: 30
+  delay: 5
+  failed_when: "import.stderr and 'Warning: kubectl apply' not in import.stderr"
+
+- name: KylinCloud | Checking Kubernetes version
+  shell: >
+    {{ bin_dir }}/kubectl version -o json | jq '.serverVersion.gitVersion' | sed s/\"//g
+  register: kubernetes_version
+
+- name: KylinCloud | Deploying snapshot controller
+  block:
+    - name: KylinCloud | Getting common component installation files
+      copy:
+        src: "{{ item }}"
+        dest: "{{ kylincloud_dir }}/"
+      loop:
+        - "snapshot-controller"
+
+    - name: KylinCloud | Creating snapshot controller values
+      template:
+        src: "{{ item.file }}.j2"
+        dest: "{{ kylincloud_dir }}/{{ item.file }}"
+      with_items:
+        - { name: custom-values-snapshot-controller, file: custom-values-snapshot-controller.yaml }
+
+    - name: KylinCloud | Removing old snapshot crd
+      command: >
+        {{ bin_dir }}/kubectl apply -f {{ kylincloud_dir }}/snapshot-controller/crds/snapshot.storage.k8s.io_volumesnapshot.yaml --force
+      failed_when: false
+
+    - name: KylinCloud | Deploying snapshot controller
+      shell: >
+        {{ bin_dir }}/helm upgrade --install snapshot-controller
+        {{ kylincloud_dir }}/snapshot-controller
+        -f {{ kylincloud_dir }}/custom-values-snapshot-controller.yaml
+        --namespace kube-system
+      failed_when: false
+
+  when:
+    - kubernetes_version.stdout is version('v1.17.0', '>=')
+
+
+- name: KylinCloud | Checking openpitrix common component
+  shell: >
+    {{ bin_dir }}/kubectl get pod -n openpitrix-system
+  register: openpitrix_component_pod
+
+
+- include_tasks: pv-migration.yaml
+  loop:
+    - {op: "openpitrix-db", ks: "mysql-pvc"}
+    - {op: "openpitrix-etcd", ks: "etcd-pvc"}
+#    - {openpitrix: "openpitrix-minio", ks: "minio-pvc"}
+  when:
+    - openpitrix_component_pod.stdout.find("openpitrix-db-deployment") != -1
+
+
+- name: KylinCloud | Getting PersistentVolumeName (mysql/etcd/minio)
+  block:
+
+    - name: Getting PersistentVolumeName (mysql)
+      shell: >
+        kubectl get pv | grep "kylincloud-system/mysql-pvc" | awk '{print $1}'
+      register: pvName
+    - name: Getting PersistentVolumeSize (mysql)
+      shell: >
+        kubectl get pv | grep "kylincloud-system/mysql-pvc" | awk '{print $2}'
+      register: pvSize
+
+    - name: Setting PersistentVolumeName (mysql)
+      set_fact:
+        db_pv_name: "{{ pvName.stdout }}"
+    - name: Setting PersistentVolumeSize (mysql)
+      set_fact:
+        common:
+          mysqlVolumeSize: "{{ pvSize.stdout }}"
+
+
+    - name: Getting PersistentVolumeName (etcd)
+      shell: >
+        kubectl get pv | grep "kylincloud-system/etcd-pvc" | awk '{print $1}'
+      register: pvName
+    - name: Getting PersistentVolumeSize (etcd)
+      shell: >
+        kubectl get pv | grep "kylincloud-system/etcd-pvc" | awk '{print $2}'
+      register: pvSize
+
+    - name: Setting PersistentVolumeName (etcd)
+      set_fact:
+        etcd_pv_name: "{{ pvName.stdout }}"
+    - name: Setting PersistentVolumeSize (etcd)
+      set_fact:
+        common:
+          etcdVolumeSize: "{{ pvSize.stdout}}"
+
+
+  when:
+    - openpitrix_component_pod.stdout.find("openpitrix-db-deployment") != -1
+
+- import_tasks: get_old_config.yaml
+
+- name: KylinCloud | Creating common component manifests
+  template:
+    src: "{{ item.file }}.j2"
+    dest: "{{ kylincloud_dir }}/common/{{ item.file }}"
+  with_items:
+#    - { path: etcd, file: etcd.yaml }
+#    - { name: mysql, file: mysql.yaml }
+    - { path: redis, file: redis.yaml }
+
+
+#- name: KylinCloud | Creating mysql sercet
+#  shell: >
+#    {{ bin_dir }}/kubectl create secret generic mysql-pass
+#    --from-file={{ kylincloud_dir }}/common/password.txt
+#    -n kylincloud-system
+#  register: import
+#  failed_when: "import.stderr and 'AlreadyExists' not in import.stderr"
+
+- name: KylinCloud | Deploying common component
+  block:
+    - name: KylinCloud | Deploying etcd and mysql
+      shell: >
+        {{ bin_dir }}/kubectl -n kylincloud-system apply -f {{ kylincloud_dir }}/common/{{ item }}
+      loop:
+        - "etcd.yaml"
+        - "mysql.yaml"
+      register: import
+      failed_when:
+        - "import.stderr and 'is immutable after creation except resources.requests for bound claims' not in import.stderr"
+        - "import.stderr and 'is forbidden' not in import.stderr"
+
+
+    - import_tasks: minio-install.yaml
+
+
+    - import_tasks: redis-install.yaml
+
+
+    - import_tasks: openldap-install.yaml
+
+  when:
+    - openpitrix_component_pod.stdout.find("openpitrix-db-deployment") != -1
+
+
+- import_tasks: common-install.yaml
+  when:
+    - openpitrix_component_pod.stdout.find("openpitrix-db-deployment") == -1
+
+
+- name: KylinCloud | Setting persistentVolumeReclaimPolicy (mysql/etcd/minio)
+  block:
+
+    - name: Setting persistentVolumeReclaimPolicy (mysql)
+      shell: >
+        kubectl patch pv $(kubectl get pv | grep "mysql-pvc" | awk '{print $1}')
+        -p '{"spec":{"persistentVolumeReclaimPolicy": "Delete"}}'
+
+    - name: Setting persistentVolumeReclaimPolicy (etcd)
+      shell: >
+        kubectl patch pv $(kubectl get pv | grep "etcd-pvc" | awk '{print $1}')
+        -p '{"spec":{"persistentVolumeReclaimPolicy": "Delete"}}'
+
+  when:
+    - openpitrix_component_pod.stdout.find("openpitrix-db-deployment") != -1

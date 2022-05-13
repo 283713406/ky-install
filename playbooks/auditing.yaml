@@ -1,0 +1,10 @@
+---
+
+- hosts: localhost
+  gather_facts: false
+  roles:
+    - kylincloud-defaults
+    - role: ky-auditing
+      when:
+        - "status.auditing is not defined or status.auditing.status is not defined or status.auditing.status != 'enabled'"
+

@@ -1,0 +1,16 @@
+- name: ky-events | Getting logging installation files
+  copy:
+    src: "fluentbit-operator"
+    dest: "{{ kylincloud_dir }}/"
+
+
+- name: ky-events | Creating manifests
+  template:
+    src: "{{ item.file }}.j2"
+    dest: "{{ kylincloud_dir }}/fluentbit-operator/{{ item.file }}"
+  with_items:
+    - { name: custom-output-elasticsearch-events, file: custom-output-elasticsearch-events.yaml }
+
+- name: ky-events | Apply fluentbit operator custom resources
+  shell: >
+    {{ bin_dir }}/kubectl apply -f {{ kylincloud_dir }}/fluentbit-operator

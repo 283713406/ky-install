@@ -1,0 +1,17 @@
+apiVersion: logging.kylincloud.io/v1alpha2
+kind: Filter
+metadata:
+  name: systemd
+  namespace: kylincloud-logging-system
+  labels:
+    logging.kylincloud.io/enabled: "true"
+    logging.kylincloud.io/component: logging
+spec:
+  match: service.*
+  filters:
+  - lua:
+      script:
+        key: systemd.lua
+        name: fluent-bit-lua
+      call: add_time
+      timeAsTable: true

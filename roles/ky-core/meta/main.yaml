@@ -1,0 +1,12 @@
+---
+
+dependencies:
+  - role: ky-core/prepare
+    when:
+      - "status.core is not defined or status.core.status is not defined or status.core.status != 'enabled'"
+
+  - role: ky-core/init-token
+
+  - role: ky-core/ky-core
+    when:
+      - "status.core is not defined or status.core.status is not defined or status.core.status != 'enabled'"

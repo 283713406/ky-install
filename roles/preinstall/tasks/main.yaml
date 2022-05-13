@@ -1,0 +1,20 @@
+---
+
+- import_tasks: precheck.yaml
+
+- name: KylinCloud | Checking KylinCloud component
+  shell: >
+    {{ bin_dir }}/kubectl get deploy -n kylincloud-system
+  register: kylincloud_component_deployment
+
+- name: KylinCloud | Getting KylinCloud component version
+  shell: >
+    {{ bin_dir }}/kubectl get deploy -n  kylincloud-system ky-console -o jsonpath='{.metadata.labels.version}'
+  register: console_version
+  when:
+    - kylincloud_component_deployment.stdout.find("ky-console") != -1
+
+- import_tasks: helm-migrate.yaml
+  when:
+    - kylincloud_component_deployment.stdout.find("ky-console") != -1
+    - console_version.stdout is version('v3.0.0', '<')

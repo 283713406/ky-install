@@ -1,0 +1,78 @@
+- name: KylinCloud | Getting openldap installation files
+  copy:
+    src: "{{ item }}"
+    dest: "{{ kylincloud_dir }}/"
+  loop:
+    - "openldap-ha"
+
+
+- name: KylinCloud | Creating manifests
+  template:
+    src: "{{ item.file }}.j2"
+    dest: "{{ kylincloud_dir }}/{{ item.file }}"
+  with_items:
+    - { name: custom-values-openldap, file: custom-values-openldap.yaml }
+
+
+- name: KylinCloud | Checking old openldap status
+  shell: >
+    {{ bin_dir }}/kubectl get pod
+    -n kylincloud-system
+    -l app=openldap,tier=database,version=openldap-2.4 | wc -l
+  register: old_openldap_exist
+
+- name: KylinCloud | Shutdown ks-account
+  shell: >
+    {{ bin_dir }}/kubectl -n kylincloud-system scale deployment ks-account --replicas=0
+  when:
+    - old_openldap_exist.stdout != "0"
+
+- name: KylinCloud | Deleting and backup old openldap svc
+  shell: >
+    {{ bin_dir }}/kubectl get svc -n kylincloud-system openldap -o yaml > {{ kylincloud_dir }}/openldap-svc-backup.yaml
+    &&
+    {{ bin_dir }}/kubectl delete svc -n kylincloud-system openldap
+  when:
+    - old_openldap_exist.stdout != "0"
+
+
+- name: KylinCloud | Checking openldap
+  shell: >
+    {{ bin_dir }}/helm list -n kylincloud-system | grep "ks-openldap"
+  register: openldap_check
+  failed_when: false
+
+
+- name: KylinCloud | Deploying openldap
+  shell: >
+    {{ bin_dir }}/helm upgrade --install ks-openldap
+    {{ kylincloud_dir }}/openldap-ha
+    -f {{ kylincloud_dir }}/custom-values-openldap.yaml
+    --set fullnameOverride=openldap
+    --namespace kylincloud-system
+  when:
+    - (openldap_check.stdout.find("deployed") == -1) or (openldap_check.stdout.find("1.0") == -1)
+
+- import_tasks: openldap-migration.yaml
+  when:
+    - old_openldap_exist.stdout != "0"
+
+
+- name: KylinCloud | Restarting ks-account
+  shell: >
+    {{ bin_dir }}/kubectl -n kylincloud-system scale deployment ks-account --replicas=1
+  when:
+    - old_openldap_exist.stdout != "0"
+
+
+- name: KylinCloud | Importing openldap status
+  shell: >
+    {{ bin_dir }}/kubectl patch cc ks-installer
+    --type merge
+    -p '{"status": {"openldap": {"status": "enabled", "enabledTime": "{{ lookup('pipe','date  +%Y-%m-%dT%H:%M:%S%Z') }}"}}}'
+    -n kylincloud-system
+  register: import
+  failed_when: "import.stderr and 'Warning' not in import.stderr"
+  until: import is succeeded
+  retries: 5
+  delay: 3

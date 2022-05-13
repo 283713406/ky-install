@@ -1,0 +1,19 @@
+apiVersion: logging.kylincloud.io/v1alpha2
+kind: FluentBitConfig
+metadata:
+  name: fluent-bit-config
+  namespace: kylincloud-logging-system
+  labels:
+    app.kubernetes.io/name: fluent-bit
+spec:
+  service:
+    parsersFile: parsers.conf
+  inputSelector:
+    matchLabels:
+      logging.kylincloud.io/enabled: "true"
+  filterSelector:
+    matchLabels:
+      logging.kylincloud.io/enabled: "true"
+  outputSelector:
+    matchLabels:
+      logging.kylincloud.io/enabled: "true"

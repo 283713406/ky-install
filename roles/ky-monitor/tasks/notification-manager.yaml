@@ -1,0 +1,126 @@
+---
+
+- name: notification-manager | Getting notification-manager installation files
+  copy:
+    src: "notification-manager"
+    dest: "{{ kylincloud_dir }}/"
+
+- name: notification-manager | Getting federated files
+  copy:
+    src: "federated"
+    dest: "{{ kylincloud_dir }}/"
+
+- name: notification-manager | Getting migrator files
+  copy:
+    src: "notification-manager-migrator"
+    dest: "{{ kylincloud_dir }}/"
+
+- name: notification-manager | Getting notification-manager installation files
+  template:
+    src: "{{ item.file }}.j2"
+    dest: "{{ kylincloud_dir }}/{{ item.path }}/{{ item.file }}"
+  with_items:
+    - { path: notification-manager, file: custom-values-notification.yaml }
+
+
+- name: notification-manager | Checking notification-manager
+  shell: >
+    {{ bin_dir }}/helm list -f notification-manager -n kylincloud-monitoring-system
+  register: notification_check
+  failed_when: notification_check.rc != 0
+
+- name: KylinCloud | Backuping old notification-manager crd
+  shell: >
+    cd {{ kylincloud_dir }}/notification-manager-migrator &&
+    chmod +x * &&
+    bash update.sh &&
+    cd -
+  register: notification_backuping
+  until: notification_backuping.rc == 0
+  retries: 5
+  delay: 1
+  when:
+    - notification_check.rc == 0
+    - notification_check.stdout.find("0.1.0") != -1
+  failed_when: notification_backuping.rc != 0
+
+- name: notification-manager | Uninstalling old notification-manager
+  shell: >
+    {{ bin_dir }}/helm del notification-manager -n kylincloud-monitoring-system &&
+    {{ bin_dir }}/kubectl delete --ignore-not-found=true crd notificationmanagers.notification.kylincloud.io &&
+    {{ bin_dir }}/kubectl delete --ignore-not-found=true crd dingtalkconfigs.notification.kylincloud.io &&
+    {{ bin_dir }}/kubectl delete --ignore-not-found=true crd dingtalkreceivers.notification.kylincloud.io &&
+    {{ bin_dir }}/kubectl delete --ignore-not-found=true crd emailconfigs.notification.kylincloud.io &&
+    {{ bin_dir }}/kubectl delete --ignore-not-found=true crd emailreceivers.notification.kylincloud.io &&
+    {{ bin_dir }}/kubectl delete --ignore-not-found=true crd slackconfigs.notification.kylincloud.io &&
+    {{ bin_dir }}/kubectl delete --ignore-not-found=true crd slackreceivers.notification.kylincloud.io &&
+    {{ bin_dir }}/kubectl delete --ignore-not-found=true crd webhookconfigs.notification.kylincloud.io &&
+    {{ bin_dir }}/kubectl delete --ignore-not-found=true crd webhookreceivers.notification.kylincloud.io &&
+    {{ bin_dir }}/kubectl delete --ignore-not-found=true crd wechatconfigs.notification.kylincloud.io &&
+    {{ bin_dir }}/kubectl delete --ignore-not-found=true crd wechatreceivers.notification.kylincloud.io
+  register: nm_uninstall
+  when:
+    - notification_check.rc == 0
+    - notification_check.stdout.find("0.1.0") != -1
+  failed_when: nm_uninstall is not succeeded
+
+- name: notification-manager | Deploying notification-manager
+  shell: >
+    {{ bin_dir }}/helm upgrade --install notification-manager
+    {{ kylincloud_dir }}/notification-manager
+    -f {{ kylincloud_dir }}/notification-manager/custom-values-notification.yaml
+    -n kylincloud-monitoring-system
+    --force
+  register: deploy_result
+  until: deploy_result is succeeded
+  retries: 3
+  delay: 10
+  when:
+    - notification_check.rc == 0
+    - notification_check.stdout.find("1.0.0") == -1
+
+- name: notification-manager | Deploying notification-manager crds
+  shell: >
+     cd {{ kylincloud_dir }}/notification-manager-migrator &&
+     chmod +x * &&
+     bash deploy.sh &&
+     cd -
+  register: deploy_crds
+  when:
+    - notification_backuping is not skipped
+    - notification_backuping.rc == 0
+  failed_when: deploy_crds is not succeeded
+
+- name: notification-manager | Checking federatednamespace crd installed
+  shell: >
+    {{ bin_dir }}/kubectl get crd federatednamespaces.types.kubefed.io -o jsonpath='{.metadata.name}'
+  register: crd_installed
+  failed_when: false
+
+- name: notification-manager | Deploying federatednamespace crd
+  shell: "{{ bin_dir }}/kubectl apply -f {{ kylincloud_dir }}/federated/federatednamespaces.yaml"
+  register: import
+  failed_when: "import.stderr and 'Warning' not in import.stderr and 'spec.clusterIP' not in import.stderr"
+  until: import is succeeded
+  retries: 5
+  delay: 3
+  when:
+    - multicluster is defined and multicluster.clusterRole == 'host'
+    - crd_installed.rc != 0 or crd_installed.stdout.find("federatednamespaces.types.kubefed.io") == -1
+
+- name: notification-manager | Checking federated namespace deployed
+  shell: >
+    {{ bin_dir }}/kubectl get federatednamespaces.types.kubefed.io -n kylincloud-monitoring-federated kylincloud-monitoring-federated -o jsonpath='{.metadata.name}'
+  register: namespace_deployed
+  failed_when: false
+
+- name: notification-manager | Deploying federated namespace
+  shell: "{{ bin_dir }}/kubectl apply -f {{ kylincloud_dir }}/federated/kylincloud-monitoring-federated.yaml"
+  register: import
+  failed_when: "import.stderr and 'Warning' not in import.stderr and 'spec.clusterIP' not in import.stderr"
+  until: import is succeeded
+  retries: 5
+  delay: 3
+  when:
+    - multicluster is defined and multicluster.clusterRole == 'host'
+    - namespace_deployed.rc != 0 or namespace_deployed.stdout.find("kylincloud-monitoring-federated") == -1

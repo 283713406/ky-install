@@ -1,0 +1,10 @@
+---
+
+- hosts: localhost
+  gather_facts: false
+  roles:
+    - kylincloud-defaults
+    - role: ky-devops
+      when:
+        - "status.devops is not defined or status.devops.status is not defined or status.devops.status != 'enabled'"
+#    - { role: ky-core, when: sonar_health is defined and sonar_health == true }

@@ -1,0 +1,22 @@
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: ky-upgrade
+  namespace: kylincloud-system
+  labels:
+    job: ky-upgrade
+    version: v3.0.0
+spec:
+  template:
+    spec:
+      serviceAccountName: ky-installer
+      restartPolicy: OnFailure
+      containers:
+        - command:
+            - ky-upgrade
+            - --logtostderr
+            - --v=4
+          image: {{ ks_update_repo }}:{{ ks_update_tag }}
+          imagePullPolicy: IfNotPresent
+          name: ky-upgrade

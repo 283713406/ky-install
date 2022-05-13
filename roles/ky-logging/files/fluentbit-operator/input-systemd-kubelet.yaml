@@ -1,0 +1,16 @@
+apiVersion: logging.kylincloud.io/v1alpha2
+kind: Input
+metadata:
+  name: kubelet
+  namespace: kylincloud-logging-system
+  labels:
+    logging.kylincloud.io/enabled: "true"
+    logging.kylincloud.io/component: logging
+spec:
+  systemd:
+    tag: service.kubelet
+    path: /var/log/journal
+    db: /fluent-bit/tail/kubelet.db
+    dbSync: Normal
+    systemdFilter:
+      - _SYSTEMD_UNIT=kubelet.service

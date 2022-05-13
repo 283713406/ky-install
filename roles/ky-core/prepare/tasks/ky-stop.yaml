@@ -1,0 +1,13 @@
+- name: ky-upgrade | Disabling ky-apiserver
+  shell: "{{ bin_dir }}/kubectl -n kylincloud-system scale deployment ky-apiserver --replicas=0"
+  failed_when: false
+
+
+- name: ky-upgrade | Disabling ky-console
+  shell: "{{ bin_dir }}/kubectl -n kylincloud-system scale deployment ky-console --replicas=0"
+  failed_when: false
+
+
+- name: ky-upgrade | Disabling ky-controller-manager
+  shell: "{{ bin_dir }}/kubectl -n kylincloud-system scale deployment ky-controller-manager --replicas=0"
+  failed_when: false

@@ -1,0 +1,66 @@
+FROM harbor.kylincloud.org/docker/library/golang:1.16-alpine3.13
+
+ARG appVersion=latest
+
+RUN sed -i 's/dl-cdn.alpinelinux.org/mirrors.ustc.edu.cn/g' /etc/apk/repositories
+
+RUN apk --no-cache add git ca-certificates
+
+RUN git clone --branch v1.0.0-beta.5 https://gitlab.kylincloud.org/wangqiwei/shell-operator.git /go/src/github.com/flant/shell-operator
+
+# RUN go get -d github.com/flant/shell-operator/...
+
+WORKDIR /go/src/github.com/flant/shell-operator
+
+RUN export GOPROXY=https://proxy.golang.com.cn,direct && go mod download
+
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w -X 'github.com/flant/shell-operator/pkg/app.Version=$appVersion'" -o shell-operator ./cmd/shell-operator
+
+
+FROM harbor.kylincloud.org/docker/library/python:3.9.6-alpine3.13
+
+ARG ARCH
+
+RUN sed -i 's/dl-cdn.alpinelinux.org/mirrors.ustc.edu.cn/g' /etc/apk/repositories
+
+RUN apk --no-cache add jq gcc bash libffi-dev openssl-dev curl unzip musl-dev openssl && \
+    pip install --no-cache-dir psutil cryptography==3.0 ansible_runner==1.4.6 ansible==2.8.12 "jinja2<3.1" redis kubernetes && \
+    wget https://get.helm.sh/helm-v3.2.1-linux-${ARCH}.tar.gz && \
+    tar -zxf helm-v3.2.1-linux-${ARCH}.tar.gz && \
+    mv linux-${ARCH}/helm /bin/helm && \
+    rm -rf *linux-${ARCH}* && \
+    chmod +x /bin/helm && \
+    wget https://storage.googleapis.com/kubernetes-release/release/v1.18.18/bin/linux/${ARCH}/kubectl -O /bin/kubectl && \
+    chmod +x /bin/kubectl && \
+    ln -s /bin/kubectl /usr/local/bin/kubectl && \
+    ln -s /bin/helm /usr/local/bin/helm && \
+    mkdir -p /hooks/kylincloud /kylincloud/installer/roles /kylincloud/results/env /kylincloud/playbooks /kylincloud/config &&\
+    ln -sf /usr/share/zoneinfo/Asia/Shanghai /etc/localtime && \
+    adduser -D -g kylincloud -u 1002 kylincloud
+
+COPY --from=0 /go/src/github.com/flant/shell-operator/shell-operator /
+
+RUN chown -R kylincloud:kylincloud /shell-operator && \
+    chown -R kylincloud:kylincloud /hooks && \
+    chown -R kylincloud:kylincloud /kylincloud
+
+ADD controller/* /hooks/kylincloud/
+RUN chmod +x -R /hooks/kylincloud
+
+USER kylincloud
+
+ENV SHELL_OPERATOR_WORKING_DIR /hooks
+ENV ANSIBLE_ROLES_PATH /kylincloud/installer/roles
+
+WORKDIR /kylincloud
+
+ADD roles /kylincloud/installer/roles
+
+ADD env /kylincloud/results/env
+
+ADD playbooks /kylincloud/playbooks
+
+ENTRYPOINT ["/shell-operator"]
+
+CMD ["start"]
+

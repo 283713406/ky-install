@@ -1,0 +1,45 @@
+stages:
+  - build
+
+.build: &build_ref
+  stage: build
+  script:
+    - ./build_images.sh
+
+build_amd64:
+  <<: *build_ref
+  variables:
+    ARCH : 'amd64'
+  image: registry.kylincloud.org/pub/dind/amd64:latest
+  tags:
+    - amd64
+
+build_arm64:
+  <<: *build_ref
+  variables:
+    ARCH : 'arm64'
+  image: registry.kylincloud.org/pub/dind/arm64:latest
+  tags:
+    - arm64
+
+local_build_amd64:
+  <<: *build_ref
+  variables:
+    ARCH : 'amd64'
+  image:
+    name: registry.kylincloud.org/pub/dind/amd64:latest
+  rules:
+    - if: $CI_BUILD_TOKEN
+  tags:
+    - amd64
+
+local_build_arm64:
+  <<: *build_ref
+  variables:
+    ARCH : 'arm64'
+  image:
+    name: registry.kylincloud.org/pub/dind/arm64:latest
+  rules:
+    - if: $CI_BUILD_TOKEN
+  tags:
+    - arm64

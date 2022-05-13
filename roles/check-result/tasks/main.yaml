@@ -1,0 +1,43 @@
+---
+
+- name: ky-devops | Getting ky-sonarqube NodeIp
+  shell: "{{ bin_dir }}/kubectl get node -o wide | awk '{if(NR == 2){print $6}}'"
+  register: ks_nodeIP
+
+- name: KylinCloud | Waiting for ky-console
+  shell: "{{ bin_dir }}/kubectl get pod -n kylincloud-system -o wide | grep ky-console | awk '{print $3}'"
+  register: result
+  until: result.stdout.find("Running") != -1
+  retries: 30
+  delay: 30
+
+- name: KylinCloud | Waiting for ky-apiserver
+  shell: "{{ bin_dir }}/kubectl get pod -n kylincloud-system -o wide | grep ky-apiserver | awk '{print $3}'"
+  register: result
+  until: result.stdout.find("Running") != -1
+  retries: 30
+  delay: 30
+
+- name: KylinCloud | Getting ky-console svc port
+  shell: "{{ bin_dir }}/kubectl get svc ky-console -n kylincloud-system -o=jsonpath='{.spec.ports[0].nodePort}'"
+  register: ks_console_svc_port
+
+- name: KylinCloud | Importing ky-core status
+  shell: >
+    {{ bin_dir }}/kubectl patch cc ky-installer
+    --type merge
+    -p '{"status": {"core": {"version": "{{ ks_version }}"}}}'
+    -n kylincloud-system
+  register: import
+  failed_when: "import.stderr and 'Warning' not in import.stderr"
+  until: import is succeeded
+  retries: 5
+  delay: 3
+
+- name: KylinCloud | Creating info_file
+  template:
+    src: "welcome.j2"
+    dest: "./{{ item.file }}"
+  with_items:
+    - { name: welcome, file: kylincloud_running, type: info }
+  delegate_to: localhost

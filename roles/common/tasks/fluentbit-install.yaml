@@ -1,0 +1,81 @@
+- name: KylinCloud | Getting fluentbit installation files
+  copy:
+    src: "fluentbit-operator"
+    dest: "{{ kylincloud_dir }}/"
+
+
+- name: KylinCloud | Creating custom manifests
+  template:
+    src: "{{ item.file }}.j2"
+    dest: "{{ kylincloud_dir }}/fluentbit-operator/{{ item.path }}/{{ item.file }}"
+  with_items:
+    - { path: fluentbit, file: custom-fluentbit-fluentBit.yaml }
+    - { path: init, file: custom-fluentbit-operator-deployment.yaml }
+    - { path: migrator, file: custom-migrator-job.yaml }
+
+
+# Upgrade or install fluentbit operator
+- name: KylinCloud | Checking fluentbit-version
+  shell: >
+    {{ bin_dir }}/kubectl get crd fluentbits.logging.kylincloud.io -o jsonpath='{.spec.versions[0].name}'
+  register: fluentbit_version
+  failed_when: false
+
+
+- name: KylinCloud | Backuping old fluentbit crd
+  shell: >
+    {{ bin_dir }}/kubectl get fluentbits.logging.kylincloud.io -n kylincloud-logging-system fluent-bit -o yaml > {{ kylincloud_dir }}/fluentbit-crd.yaml.bak
+  when:
+    - fluentbit_version.rc == 0
+    - fluentbit_version.stdout.find("v1alpha1") != -1
+  failed_when: false
+
+- name: KylinCloud | Deleting old fluentbit operator
+  shell: >
+    {{ bin_dir }}/kubectl delete {{ item.type }} -n kylincloud-logging-system {{ item.name }}
+  loop:
+    - { type: deploy, name: logging-fluentbit-operator }
+    - { type: fluentbits.logging.kylincloud.io, name: fluent-bit }
+    - { type: ds, name: fluent-bit }
+    - { type: crd, name: fluentbits.logging.kylincloud.io }
+  register: result_check
+  when:
+    - fluentbit_version.rc == 0
+    - fluentbit_version.stdout.find("v1alpha1") != -1
+  failed_when: false
+
+
+- name: KylinCloud | Preparing fluentbit operator setup
+  shell: >
+    {{ bin_dir }}/kubectl apply -f {{ kylincloud_dir }}/fluentbit-operator/init
+
+
+- name: KylinCloud | Migrating fluentbit operator old config
+  shell: >
+    {{ bin_dir }}/kubectl apply -f  {{ kylincloud_dir }}/fluentbit-operator/migrator
+  when:
+    - fluentbit_version.rc == 0
+    - fluentbit_version.stdout.find("v1alpha1") != -1
+
+
+- name: KylinCloud | Deploying new fluentbit operator
+  shell: >
+    {{ bin_dir }}/kubectl apply -f {{ kylincloud_dir }}/fluentbit-operator/fluentbit
+  register: import
+  until: import is succeeded
+  retries: 5
+  delay: 3
+
+
+# Update clusterconfig (cc) status
+- name: KylinCloud | Importing fluentbit status
+  shell: >
+    {{ bin_dir }}/kubectl patch cc ks-installer
+    --type merge
+    -p '{"status": {"fluentbit": {"status": "enabled", "enabledTime": "{{ lookup('pipe','date  +%Y-%m-%dT%H:%M:%S%Z') }}"}}}'
+    -n kylincloud-system
+  register: import
+  failed_when: "import.stderr and 'Warning' not in import.stderr"
+  until: import is succeeded
+  retries: 5
+  delay: 3

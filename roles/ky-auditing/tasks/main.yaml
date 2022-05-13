@@ -1,0 +1,51 @@
+---
+
+- name: ky-auditing | getting ky-auditing installation files
+  copy:
+    src: "kube-auditing"
+    dest: "{{ kylincloud_dir }}/ky-auditing/"
+
+- name: ky-auditing | getting ky-auditing installation files
+  template:
+    src: "{{ item.file }}.j2"
+    dest: "{{ kylincloud_dir }}/{{ item.path }}/{{ item.file }}"
+  with_items:
+    - { path: ky-auditing, file: custom-values.yaml }
+
+
+- name: ky-auditing | check ky-auditing
+  shell: >
+    {{ bin_dir }}/helm list -f kube-auditing -n kylincloud-logging-system
+  register: auditing_check
+  failed_when: false
+
+
+- name: ky-auditing | deploy kube-auditing
+  shell: >
+    {{ bin_dir }}/helm upgrade --install kube-auditing
+    {{ kylincloud_dir }}/ky-auditing/kube-auditing
+    -f {{ kylincloud_dir }}/ky-auditing/custom-values.yaml
+    -n kylincloud-logging-system
+    --force
+  register: deploy_result
+  until: deploy_result is succeeded
+  retries: 3
+  delay: 10
+  when:
+    - (auditing_check.stdout.find("deployed") == -1) or (auditing_check.stdout.find("0.1.0") == -1)
+
+
+- import_tasks: fluentbit-operator.yaml
+
+
+- name: ky-auditing | Importing ky-auditing status
+  shell: >
+    {{ bin_dir }}/kubectl patch cc ks-installer
+    --type merge
+    -p '{"status": {"auditing": {"status": "enabled", "enabledTime": "{{ lookup('pipe','date  +%Y-%m-%dT%H:%M:%S%Z') }}"}}}'
+    -n kylincloud-system
+  register: import
+  failed_when: "import.stderr and 'Warning' not in import.stderr"
+  until: import is succeeded
+  retries: 5
+  delay: 3

@@ -1,0 +1,12 @@
+---
+
+dbHost: mysql.kylincloud-system.svc
+dbPort: 3306
+
+etcdHost: etcd.kylincloud-system.svc
+etcdPort: 2379
+etcdEndpoint: "{{ etcdHost }}:{{ etcdPort }}"
+
+redisHost: redis.kylincloud-system.svc
+redisPort: 6379
+redisEndpoint: "{{ redisHost }}:{{ redisPort }}"
